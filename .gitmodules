@@ -1,0 +1,18 @@
+[submodule "hicodet"]
+	path = hicodet
+	url = https://github.com/ga94zot/hicodet.git
+[submodule "vcoco"]
+	path = vcoco
+	url = https://github.com/ga94zot/vcoco.git
+[submodule "pocket"]
+	path = pocket
+	url = https://github.com/fredzzhang/pocket.git
+[submodule "detr"]
+	path = detr
+	url = https://github.com/ga94zot/detr.git
+[submodule "h-detr"]
+	path = h_detr
+	url = https://github.com/ga94zot/h_detr.git
+[submodule "llava"]
+	path = llava
+	url = https://github.com/ga94zot/llava.git
