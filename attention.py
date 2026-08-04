@@ -11,11 +11,6 @@ In addition, the returned attention weights are no longer averaged across all he
 
 https://github.com/pytorch/pytorch/blob/master/torch/nn/modules/activation.py#L873
 https://github.com/pytorch/pytorch/blob/master/torch/nn/functional.py#L4837
-
-Fred Zhang <frederic.zhang@anu.edu.au>
-
-The Australian National University
-Microsoft Research Asia
 """
 
 from typing import Optional

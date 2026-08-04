@@ -1,11 +1,6 @@
 """
 Visualise detected human-object interactions and
 the cross-attention weights for SMHA, Register, self-attns.
-
-Zhinan Li <zhinan.li@tum.de>
-
-Technical University of Munich
-
 """
 
 import os

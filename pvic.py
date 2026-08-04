@@ -1,19 +1,6 @@
 """
-Two-stage HOI detector with enhanced visual context
-
-Fred Zhang <frederic.zhang@anu.edu.au>
-
-The Australian National University
-Microsoft Research Asia
-
-===================================================
-
-Introduce VLM features to HOI detector. 
-
-Zhinan Li <zhinan.li@tum.de>
-
-Technical University of Munich
-
+Two-stage HOI detector with enhanced visual context,
+with VLM features introduced into the interaction head.
 """
 
 import os

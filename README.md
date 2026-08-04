@@ -17,14 +17,14 @@ This repository is maintained by **Yuankai Wu** (Technical University of Munich)
 
 1. Use the package management tool of your choice and run the following commands after creating your environment.
     ```bash
-    # Say you are using Conda
-    conda create --name umihoi python=3.8
-    conda activate umihoi
     # Clone the repo and submodules
     git clone https://github.com/ga94zot/UMI-HOI.git
     cd UMI-HOI
     git submodule init
     git submodule update
+    # Say you are using Conda
+    conda create --name umihoi python=3.8
+    conda activate umihoi
     # Required dependencies
     pip install -r requirements.txt
     pip install -e pocket

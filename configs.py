@@ -1,10 +1,5 @@
 """
 Configurations for object detectors
-
-Fred Zhang <frederic.zhang@anu.edu.au>
-
-The Australian National University
-Microsoft Research Asia
 """
 
 import argparse

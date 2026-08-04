@@ -1,11 +1,6 @@
 """
 Visualise detected human-object interactions and
 the cross-attention weights.
-
-Fred Zhang <frederic.zhang@anu.edu.au>
-
-The Australian National University
-Australian Centre for Robotic Vision
 """
 
 import os

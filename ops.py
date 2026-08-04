@@ -1,10 +1,5 @@
 """
-Opearations
-
-Fred Zhang <frederic.zhang@anu.edu.au>
-
-The Australian National University
-Microsoft Research Asia
+Operations
 """
 
 import math

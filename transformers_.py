@@ -8,20 +8,7 @@ Implementation of Swin Transformers are adapted from microsoft/Swin-Transformer 
 https://github.com/microsoft/Swin-Transformer/tree/main/models
 https://github.com/pytorch/vision/blob/main/torchvision/models/swin_transformer.py
 
-Fred Zhang <frederic.zhang@anu.edu.au>
-
-The Australian National University
-Microsoft Research Asia
-
-===================================================
-
 The semantic MHA and unified token are composed in TransformerDecoderLayer
-
-Zhinan Li <zhinan.li@tum.de>
-
-Technical University of Munich
-
-
 """
 import copy
 import math

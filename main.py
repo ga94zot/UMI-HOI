@@ -1,20 +1,8 @@
 """
-Utilities for training, testing and caching results
-for HICO-DET and V-COCO evaluations
+Introduce VLM features to HOI detector.
 
-Fred Zhang <frederic.zhang@anu.edu.au>
-
-The Australian National University
-Microsoft Research Asia
-
-===================================================
-
-Introduce VLM features to HOI detector. 
-
-Zhinan Li <zhinan.li@tum.de>
-
-Technical University of Munich
-
+Entry point for training, testing and caching results
+for HICO-DET and V-COCO evaluations.
 """
 
 import os
