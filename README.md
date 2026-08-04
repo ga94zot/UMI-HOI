@@ -92,14 +92,6 @@ DETR=base python visualization.py --llava-answer-path llava_text_folder --llava-
 
 Refer to the [documentation](docs.md) for model checkpoints and training/testing commands.
 
-## Contributor
-
-This repository is written and maintained solely by:
-
-- **Yuankai Wu** — Technical University of Munich — [yuankai.wu@tum.de](mailto:yuankai.wu@tum.de) — [@ga94zot](https://github.com/ga94zot)
-
-Issues, questions and feature requests should be directed to me via the
-[issue tracker](https://github.com/ga94zot/UMI-HOI/issues) or by email.
 
 ## License
 
