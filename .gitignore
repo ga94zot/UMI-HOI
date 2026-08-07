@@ -113,6 +113,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+Miniconda3-latest-Linux-x86_64.sh
 
 # Spyder project settings
 .spyderproject
