@@ -15,6 +15,7 @@
 - Do not overwrite checkpoints.
 - Before changing model architecture, explain the change.
 - Keep training commands reproducible.
-
+- Modify the source code; do not delete it directly. If you need to write new code, you can comment out the existing source code.
 - Never remove existing functionality.
 - Before performing any Git operations, ask for confirmation first.
+- When you need to modify the code in a submodule, first comment out the source code, then write an explanation of why you made the changes in the new code.
