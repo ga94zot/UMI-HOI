@@ -13,3 +13,6 @@
 [submodule "h-detr"]
 	path = h_detr
 	url = https://github.com/ga94zot/h_detr.git
+[submodule "llava"]
+	path = llava
+	url = https://github.com/ga94zot/llava.git
