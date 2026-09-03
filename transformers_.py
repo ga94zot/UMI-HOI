@@ -12,12 +12,21 @@ The semantic MHA and unified token are composed in TransformerDecoderLayer
 """
 import copy
 import math
+import os
 import torch
 import torch.nn.functional as F
 
 from torch import nn, Tensor
 from attention import MultiheadAttention, MultiheadAttentionSigmoid
 from typing import List, Optional, Callable
+
+# 2026-09-01: input dim of the VLM visual-token projections, previously
+# hardcoded as 1536 (SigLIP2-giant's hidden size) in four nn.Linear layers
+# below. Made configurable via env var so the visual encoder can be swapped
+# (e.g. DINOv3/DINOv2 ViT-L = 1024) WITHOUT touching this file again, exactly
+# like the earlier CLIP->SigLIPv2 swap but parameterised instead of re-edited.
+# Default 1536 keeps every existing command and checkpoint bit-identical.
+VLM_VIS_DIM = int(os.environ.get("VLM_VIS_DIM", "1536"))
 
 class TransformerEncoderLayer(nn.Module):
     def __init__(self, dim, num_heads, ffn_interm_dim, dropout=0.1):
@@ -302,18 +311,35 @@ class TransformerDecoderLayer(nn.Module):
         self.backbone_pos_proj_o = nn.Sequential(nn.Linear(q_dim, ffn_interm_dim), nn.ReLU(), nn.Linear(ffn_interm_dim, self.o_dim // 2))
 
         self.answer_proj = nn.Sequential(nn.Linear(q_dim, ffn_interm_dim), nn.ReLU(), nn.Linear(ffn_interm_dim, q_dim))
+        # 2026-09-01: 1536 -> VLM_VIS_DIM (module-level, default 1536; see the
+        # comment at the top of this file). Original lines kept below.
+        # self.clip_token_proj_h = nn.Sequential(
+        #     nn.Linear(1536, ffn_interm_dim),
+        #     nn.ReLU(),
+        #     nn.Dropout(dropout),
+        #     nn.Linear(ffn_interm_dim, self.h_dim))
+        # self.clip_token_proj_o = nn.Sequential(
+        #     nn.Linear(1536, ffn_interm_dim),
+        #     nn.ReLU(),
+        #     nn.Dropout(dropout),
+        #     nn.Linear(ffn_interm_dim, self.o_dim))
+        # self.clip_cls_token_proj = nn.Sequential(
+        #     nn.Linear(1536, ffn_interm_dim),
+        #     nn.ReLU(),
+        #     nn.Dropout(dropout),
+        #     nn.Linear(ffn_interm_dim, q_dim))
         self.clip_token_proj_h = nn.Sequential(
-            nn.Linear(1536, ffn_interm_dim),
+            nn.Linear(VLM_VIS_DIM, ffn_interm_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(ffn_interm_dim, self.h_dim))
         self.clip_token_proj_o = nn.Sequential(
-            nn.Linear(1536, ffn_interm_dim),
+            nn.Linear(VLM_VIS_DIM, ffn_interm_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(ffn_interm_dim, self.o_dim))
         self.clip_cls_token_proj = nn.Sequential(
-            nn.Linear(1536, ffn_interm_dim),
+            nn.Linear(VLM_VIS_DIM, ffn_interm_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(ffn_interm_dim, q_dim))
@@ -321,8 +347,22 @@ class TransformerDecoderLayer(nn.Module):
 
         
         # self-attn
-        
-        self.self_attn = MultiheadAttention(q_dim, self.num_heads, dropout=dropout)
+
+        # 2026-09-02: optionally swap the unified-token attention for the
+        # sigmoid variant (attention.py:375, previously imported but unused).
+        # Rationale: the ablation in the paper attributes SigLIPv2 > CLIP to
+        # sigmoid preserving semantics better than softmax's competitive
+        # normalisation; the same argument applies here, where one token can
+        # legitimately support MANY HO pairs at once (multi-label relevance).
+        # Gated by env var DEC_ATTN so the default stays the original softmax
+        # -- every existing config/checkpoint is unaffected, and concurrent
+        # experiments (e.g. the DINOv3 ablation) keep their single-variable
+        # property. Original line kept below.
+        # self.self_attn = MultiheadAttention(q_dim, self.num_heads, dropout=dropout)
+        if os.environ.get("DEC_ATTN", "softmax") == "sigmoid":
+            self.self_attn = MultiheadAttentionSigmoid(q_dim, self.num_heads, dropout=dropout)
+        else:
+            self.self_attn = MultiheadAttention(q_dim, self.num_heads, dropout=dropout)
         self.self_attn_q_proj_h = nn.Linear(self.h_dim, self.h_dim)
         self.self_attn_k_proj_h = nn.Linear(self.h_dim, self.h_dim)
         self.self_attn_v_proj_h = nn.Linear(self.h_dim, self.h_dim)
@@ -559,8 +599,14 @@ class TransformerDecoderLayerNoTaskSpecified(nn.Module):
         self.backbone_proj = nn.Sequential(nn.Linear(q_dim, ffn_interm_dim), nn.ReLU(), nn.Linear(ffn_interm_dim, q_dim // 2))
         self.backbone_pos_proj = nn.Sequential(nn.Linear(q_dim, ffn_interm_dim), nn.ReLU(), nn.Linear(ffn_interm_dim, q_dim // 2))
         self.answer_proj = nn.Sequential(nn.Linear(q_dim, ffn_interm_dim), nn.ReLU(), nn.Linear(ffn_interm_dim, q_dim))
+        # 2026-09-01: 1536 -> VLM_VIS_DIM (see top-of-file comment). Original:
+        # self.clip_token_proj = nn.Sequential(
+        #     nn.Linear(1536, ffn_interm_dim),
+        #     nn.ReLU(),
+        #     nn.Dropout(dropout),
+        #     nn.Linear(ffn_interm_dim, q_dim))
         self.clip_token_proj = nn.Sequential(
-            nn.Linear(1536, ffn_interm_dim),
+            nn.Linear(VLM_VIS_DIM, ffn_interm_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(ffn_interm_dim, q_dim))

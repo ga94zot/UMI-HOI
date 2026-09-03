@@ -36,6 +36,16 @@ from h_detr.models import build_model as build_advanced_detr
 from detr.models.position_encoding import PositionEmbeddingSine
 from detr.util.misc import NestedTensor, nested_tensor_from_tensor_list
 
+# 2026-09-03 (hoi_openworld DINO-fusion experiment, ANALYSIS.md 5-V.3): when
+# DINO_FUSE=1, the dataloader delivers llava_feature as (577, 1536+DINO_DIM)
+# -- SigLIP tokens concatenated with a token-aligned DINOv3 dump (both 24x24
+# patch grids at 384x384). The DINO part is peeled off in PViC.forward,
+# rendered as a per-image spatial map on the C5 grid, and fused into
+# FeatureHead's backbone input; the decoder's VLM tokens stay pure SigLIP.
+# Both env vars default off, leaving every existing path byte-identical.
+DINO_FUSE = os.environ.get("DINO_FUSE") == "1"
+DINO_DIM = int(os.environ.get("DINO_DIM", "1024"))
+
 class MultiModalFusion(nn.Module):
     def __init__(self, fst_mod_size, scd_mod_size, repr_size):
         super().__init__()
@@ -302,25 +312,47 @@ class FeatureHead(nn.Module):
         self.dim_backbone = dim_backbone
         self.return_layer = return_layer
 
+        # 2026-09-03: first Linear widened when DINO_FUSE=1 (see module-level
+        # comment) -- backbone C5 channels + DINO patch dim. Originals:
+        # self.h_mapping = nn.Sequential(
+        #     Permute([0, 2, 3, 1]),
+        #     nn.Linear(dim_backbone, dim_backbone//2), nn.ReLU(),
+        #     nn.Linear(dim_backbone//2, dim//8 * sub_headnum)
+        # )
+        # self.o_mapping = nn.Sequential(
+        #     Permute([0, 2, 3, 1]),
+        #     nn.Linear(dim_backbone, dim_backbone//2), nn.ReLU(),
+        #     nn.Linear(dim_backbone//2, dim//8 * obj_headnum)
+        # )
+        in_dim = dim_backbone + (DINO_DIM if DINO_FUSE else 0)
         self.h_mapping = nn.Sequential(
             Permute([0, 2, 3, 1]),
-            nn.Linear(dim_backbone, dim_backbone//2), nn.ReLU(),
+            nn.Linear(in_dim, dim_backbone//2), nn.ReLU(),
             nn.Linear(dim_backbone//2, dim//8 * sub_headnum)
         )
         self.o_mapping = nn.Sequential(
             Permute([0, 2, 3, 1]),
-            nn.Linear(dim_backbone, dim_backbone//2), nn.ReLU(),
+            nn.Linear(in_dim, dim_backbone//2), nn.ReLU(),
             nn.Linear(dim_backbone//2, dim//8 * obj_headnum)
         )
         self.h_layers = SwinTransformer(dim//8 * sub_headnum, num_layers, 2 * sub_headnum)
 
         self.o_layers = SwinTransformer(dim//8 * obj_headnum, num_layers, 2 * obj_headnum)
 
-    def forward(self, x:List[NestedTensor]):
+    def forward(self, x:List[NestedTensor], dino:Optional[Tensor]=None):
 
         mask = x[self.return_layer].mask
-        x_h = self.h_mapping(x[self.return_layer].tensors)
-        x_o = self.o_mapping(x[self.return_layer].tensors)
+        # 2026-09-03: optional channel-wise fusion of the DINO spatial map
+        # (b, DINO_DIM, h, w), built in PViC.forward. dino=None keeps the
+        # original behaviour exactly.
+        if dino is not None:
+            tensors = torch.cat([x[self.return_layer].tensors, dino], dim=1)
+        else:
+            tensors = x[self.return_layer].tensors
+        # x_h = self.h_mapping(x[self.return_layer].tensors)   # original
+        # x_o = self.o_mapping(x[self.return_layer].tensors)   # original
+        x_h = self.h_mapping(tensors)
+        x_o = self.o_mapping(tensors)
         x_h = self.h_layers(x_h)
         x_o = self.o_layers(x_o)
         x = torch.cat((x_h, x_o), dim=-1)
@@ -377,6 +409,27 @@ class PViC(nn.Module):
     def freeze_detector(self):
         for p in self.detector.parameters():
             p.requires_grad = False
+
+    def _build_dino_map(self, llava_feature, ref: NestedTensor, image_sizes):
+        """2026-09-03 (DINO-fusion, ANALYSIS.md 5-V.3): render each image's
+        DINO patch tokens (last DINO_DIM dims of the concatenated llava_feature,
+        rows [:-1] = 576 patches on a square 24x24 grid) as a spatial map on the
+        C5 grid `ref` (b, C, h, w). Each image's grid is interpolated only over
+        its REAL (unpadded) extent -- ceil(H/32) x ceil(W/32) -- and placed into
+        a zero canvas, so padded regions stay zero and spatial correspondence
+        with the backbone features is preserved for every image in the batch."""
+        b, _, h, w = ref.tensors.shape
+        dino = torch.zeros(b, DINO_DIM, h, w,
+                           device=ref.tensors.device, dtype=ref.tensors.dtype)
+        for i in range(b):
+            g = llava_feature[i][:-1, -DINO_DIM:]              # (576, DINO_DIM)
+            side = int(g.shape[0] ** 0.5)                      # 24
+            gmap = g.t().reshape(1, DINO_DIM, side, side)
+            hi = min(h, int((image_sizes[i][0].item() + 31) // 32))
+            wi = min(w, int((image_sizes[i][1].item() + 31) // 32))
+            dino[i, :, :hi, :wi] = F.interpolate(
+                gmap, size=(hi, wi), mode="bilinear", align_corners=False)[0]
+        return dino
 
     def compute_classification_loss(self, logits, prior, labels):
         prior = torch.cat(prior, dim=0).prod(1)
@@ -585,7 +638,17 @@ class PViC(nn.Module):
                 # memory = features
                 # k_pos = lvl_pos_embed_flatten
                 # Compute keys/values for triplet decoder. only C5 layer
-                memory, mask = self.feature_head(features)
+                # 2026-09-03 DINO-fusion (ANALYSIS.md 5-V.3): peel the DINO dims
+                # off the concatenated llava_feature into a spatial map for
+                # FeatureHead; the decoder keeps the pure SigLIP slice.
+                # memory, mask = self.feature_head(features)   # original
+                if DINO_FUSE:
+                    dino_maps = self._build_dino_map(
+                        llava_feature, features[self.feature_head.return_layer], image_sizes)
+                    memory, mask = self.feature_head(features, dino_maps)
+                    llava_feature = [f[..., :-DINO_DIM] for f in llava_feature]
+                else:
+                    memory, mask = self.feature_head(features)
                 b, h, w, c = memory.shape
                 memory = memory.reshape(b, h * w, c)
                 kv_p_m = mask.reshape(-1, 1, h * w)
@@ -593,7 +656,15 @@ class PViC(nn.Module):
             elif self.detector_type == "base":
                 results, hs, features = self.od_forward(self.detector, images)
                 # Compute keys/values for triplet decoder.
-                memory, mask = self.feature_head(features)
+                # 2026-09-03 DINO-fusion: same as the advanced branch above.
+                # memory, mask = self.feature_head(features)   # original
+                if DINO_FUSE:
+                    dino_maps = self._build_dino_map(
+                        llava_feature, features[self.feature_head.return_layer], image_sizes)
+                    memory, mask = self.feature_head(features, dino_maps)
+                    llava_feature = [f[..., :-DINO_DIM] for f in llava_feature]
+                else:
+                    memory, mask = self.feature_head(features)
                 b, h, w, c = memory.shape
                 memory = memory.reshape(b, h * w, c)
                 kv_p_m = mask.reshape(-1, 1, h * w)
