@@ -46,6 +46,30 @@ from detr.util.misc import NestedTensor, nested_tensor_from_tensor_list
 DINO_FUSE = os.environ.get("DINO_FUSE") == "1"
 DINO_DIM = int(os.environ.get("DINO_DIM", "1024"))
 
+# 2026-09-03 (hoi_openworld SOTA route S1, ANALYSIS.md 6): text-anchored verb
+# classifier. TXT_CLS="" (default) keeps the original from-scratch
+# nn.Linear(repr, num_verbs) head untouched. TXT_CLS="verb" adds, in parallel,
+# a cosine classifier against frozen SigLIP2 text embeddings of the 117 verb
+# prompts; TXT_CLS="hoi" uses the (object, verb) HOI prompt for each pair's
+# detected object (falls back to the verb prompt where the combination is not
+# a HICO class). Embeddings come from
+# hoi_openworld/scripts/generate_text_embeddings.py (TXT_CLS_PATH). Motivation:
+# under UV/UC zero-shot the linear head's unseen rows only ever receive negative
+# gradient; text embeddings give unseen classes a direction that is not learned
+# from scratch (EZ-HOI / LAIN / DA-HOI all rely on this).
+TXT_CLS = os.environ.get("TXT_CLS", "")
+TXT_CLS_PATH = os.environ.get("TXT_CLS_PATH", "")
+# 2026-09-04 S1b (ANALYSIS.md 6-S1 diagnosis): the parallel + learnable-MLP
+# variant was neutral (UV unseen +0.48). Three knobs, defaults reproduce S1:
+#   TXT_CLS_MODE  parallel | replace   -- replace drops the nn.Linear head's logit
+#   TXT_PROJ      mlp | frozen         -- frozen: text used as-is, query projected
+#                                         to the text dim (unseen directions cannot
+#                                         be pushed around by seen-class gradients)
+#   TXT_SCALE_INIT  float (default 5)  -- initial exp(scale) of the cosine logit
+TXT_CLS_MODE = os.environ.get("TXT_CLS_MODE", "parallel")
+TXT_PROJ = os.environ.get("TXT_PROJ", "mlp")
+TXT_SCALE_INIT = float(os.environ.get("TXT_SCALE_INIT", "5"))
+
 class MultiModalFusion(nn.Module):
     def __init__(self, fst_mod_size, scd_mod_size, repr_size):
         super().__init__()
@@ -395,6 +419,28 @@ class PViC(nn.Module):
         self.kv_pe = PositionEmbeddingSine(repr_size//2, 20, normalize=True)
         self.decoder = triplet_decoder
         self.binary_classifier = nn.Linear(repr_size, num_verbs)
+        # 2026-09-03 S1 text-anchored classifier (see module-level comment).
+        if TXT_CLS:
+            assert TXT_CLS in ("verb", "hoi"), TXT_CLS
+            _emb = torch.load(TXT_CLS_PATH, map_location="cpu")
+            self.register_buffer("txt_verb_emb", _emb["verb_emb"].float())          # (117, D_txt)
+            self.register_buffer("txt_hoi_emb", _emb["hoi_emb"].float())            # (600, D_txt)
+            self.register_buffer("txt_obj_verb_to_hoi", _emb["obj_verb_to_hoi"])   # (80, 117), -1 = none
+            _d_txt = self.txt_verb_emb.shape[1]
+            assert TXT_CLS_MODE in ("parallel", "replace") and TXT_PROJ in ("mlp", "frozen")
+            if TXT_PROJ == "mlp":          # S1 (2026-09-03): learnable text side
+                self.txt_proj = nn.Sequential(
+                    nn.Linear(_d_txt, repr_size), nn.ReLU(), nn.Linear(repr_size, repr_size)
+                )
+                self.txt_query_proj = nn.Linear(repr_size, repr_size)
+            else:                          # S1b (2026-09-04): frozen text space
+                self.txt_proj = nn.Identity()
+                self.txt_query_proj = nn.Linear(repr_size, _d_txt)
+            # logit = exp(scale) * cos + bias (S1: added to the linear head's
+            # logit; S1b replace: used alone). Both learnable.
+            import math as _math
+            self.txt_logit_scale = nn.Parameter(torch.tensor(_math.log(TXT_SCALE_INIT)))
+            self.txt_logit_bias = nn.Parameter(torch.tensor(0.0))
 
         self.repr_size = repr_size
         self.human_idx = human_idx
@@ -430,6 +476,28 @@ class PViC(nn.Module):
             dino[i, :, :hi, :wi] = F.interpolate(
                 gmap, size=(hi, wi), mode="bilinear", align_corners=False)[0]
         return dino
+
+    def text_logits(self, query_embeds: Tensor, object_types: List[Tensor]) -> Tensor:
+        """2026-09-03 S1 (ANALYSIS.md 6). Cosine similarity between the projected
+        HO query and projected frozen text embeddings, per verb.
+        query_embeds: (ndec, N, repr); object_types: list of (n_i,) HICO-80 ids.
+        Returns (ndec, N, num_verbs)."""
+        q = F.normalize(self.txt_query_proj(query_embeds), dim=-1)
+        t_verb = F.normalize(self.txt_proj(self.txt_verb_emb), dim=-1)           # (V, r)
+        if TXT_CLS == "verb":
+            cos = q @ t_verb.t()                                                   # (ndec, N, V)
+        else:
+            t_hoi = F.normalize(self.txt_proj(self.txt_hoi_emb), dim=-1)          # (600, r)
+            objs = torch.cat(object_types) if len(object_types) else \
+                torch.zeros(0, dtype=torch.int64, device=q.device)
+            idx = self.txt_obj_verb_to_hoi[objs]                                   # (N, V)
+            n_hoi = t_hoi.shape[0]
+            fallback = n_hoi + torch.arange(idx.shape[1], device=idx.device)[None]
+            idx = torch.where(idx >= 0, idx, fallback)
+            table = torch.cat([t_hoi, t_verb], dim=0)                              # (600+V, r)
+            t = table[idx]                                                         # (N, V, r)
+            cos = torch.einsum("dnr,nvr->dnv", q, t)
+        return self.txt_logit_scale.exp() * cos + self.txt_logit_bias
 
     def compute_classification_loss(self, logits, prior, labels):
         prior = torch.cat(prior, dim=0).prod(1)
@@ -701,6 +769,11 @@ class PViC(nn.Module):
         # Concatenate queries from all images in the same batch.
         query_embeds = torch.cat(query_embeds, dim=1)   # (ndec, \sigma{n}, q_dim)
         logits = self.binary_classifier(query_embeds)
+        # 2026-09-03 S1: parallel text-anchored logits (TXT_CLS unset -> unchanged).
+        # 2026-09-04 S1b: TXT_CLS_MODE=replace uses the text logits alone.
+        if TXT_CLS:
+            txt = self.text_logits(query_embeds, object_types)
+            logits = txt if TXT_CLS_MODE == "replace" else logits + txt
 
         if self.training:
             labels = associate_with_ground_truth(
