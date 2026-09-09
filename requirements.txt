@@ -1,0 +1,24 @@
+# Training / evaluation environment (Python 3.8, CUDA 12.1).
+# These are the versions of the environment the released HICO-DET runs were made with.
+torch==2.4.1
+torchvision==0.19.1
+numpy==1.24.4
+scipy==1.10.1
+pillow==10.4.0
+matplotlib==3.7.5
+seaborn==0.13.2        # required by pocket.advis (visualization.py, inference.py, eval_answers.py)
+timm==0.6.13           # Swin backbone (h_detr)
+tqdm==4.70.0
+wandb==0.24.2          # optional, only with --use-wandb
+
+# Optional: download / upload the precomputed SigLIP 2 features (siglip2/hf_*_features.py)
+huggingface_hub==0.36.2
+safetensors==0.5.3
+hf_xet==1.6.0
+
+# Optional: hicodet/download.sh
+gdown
+
+# Not needed here: `transformers` is only required by the two separate environments described
+# in the README (LLaVA answer generation: transformers 4.37.2; SigLIP 2 feature extraction:
+# transformers >= 4.49).
