@@ -45,6 +45,10 @@ from detr.util.misc import NestedTensor, nested_tensor_from_tensor_list
 # Both env vars default off, leaving every existing path byte-identical.
 DINO_FUSE = os.environ.get("DINO_FUSE") == "1"
 DINO_DIM = int(os.environ.get("DINO_DIM", "1024"))
+# 2026-09-08 (ov_hoi Phase 1, code/ov_hoi/notes/DET_INJECTION_DESIGN.md): when set,
+# the HO matcher consumes an external detector's cached instances (attached to
+# the targets by utils.DataFactory) instead of DETR's. Default off.
+DET_CACHE_DIR = os.environ.get("DET_CACHE_DIR", "")
 
 # 2026-09-03 (hoi_openworld SOTA route S1, ANALYSIS.md 6): text-anchored verb
 # classifier. TXT_CLS="" (default) keeps the original from-scratch
@@ -739,8 +743,24 @@ class PViC(nn.Module):
                 k_pos = self.kv_pe(NestedTensor(memory, mask)).permute(0, 2, 3, 1).reshape(b, h * w, 1, c)
             results = self.postprocessor(results, image_sizes)
         
+        # 2026-09-08 (ov_hoi Phase 1, code/ov_hoi/notes/DET_INJECTION_DESIGN.md):
+        # with DET_CACHE_DIR set, the instances the HO matcher sees -- boxes,
+        # scores, labels AND the per-instance 256-d query embeddings -- come from
+        # an external detector, cached by the dataset onto the targets in the
+        # same image frame as `results`. The DETR forward above still runs
+        # because FeatureHead's memory comes from its backbone. Key order of the
+        # dict matters: ops.prepare_region_proposals unpacks res.values() as
+        # (scores, labels, boxes). Default (env unset) is the original call.
+        # region_props = prepare_region_proposals(
+        #     results, hs[-1], image_sizes,          # original
+        if DET_CACHE_DIR and targets is not None and all("det_boxes" in t for t in targets):
+            results = [{"scores": t["det_scores"], "labels": t["det_labels"], "boxes": t["det_boxes"]}
+                       for t in targets]
+            hs_last = [t["det_embeds"] for t in targets]
+        else:
+            hs_last = hs[-1]
         region_props = prepare_region_proposals(
-            results, hs[-1], image_sizes,
+            results, hs_last, image_sizes,
             box_score_thresh=self.box_score_thresh,
             human_idx=self.human_idx,
             min_instances=self.min_instances,

@@ -117,6 +117,34 @@ class DataFactory(Dataset):
             target['labels'] = target['actions']
             target['object'] = target.pop('objects')
 
+        # 2026-09-08 (ov_hoi Phase 1, code/ov_hoi/notes/DET_INJECTION_DESIGN.md):
+        # with DET_CACHE_DIR set, attach an external detector's cached output for
+        # this image (boxes in ORIGINAL pixels, scores, HICO-80 labels, 256-d
+        # query embeddings) to the target BEFORE the geometric transforms, so
+        # det_boxes are flipped/resized/cropped exactly like the image (see the
+        # det_boxes branches in detr/datasets/transforms.py). pvic.py swaps them
+        # in for the DETR instances. Default (env unset) leaves this method
+        # byte-identical to before.
+        _det_root = os.environ.get("DET_CACHE_DIR")
+        if _det_root and self.name == 'hicodet':
+            import json as _json
+            _fn = self.dataset._filenames[self.dataset.train_idx[i]]   # same index HICODet.__getitem__ used
+            _split = "train2015" if "train2015" in _fn else "test2015"
+            _base = os.path.join(_det_root, _split, _fn)
+            with open(_base + ".json") as _f:
+                _det = _json.load(_f)
+            _boxes = torch.as_tensor(_det["boxes"], dtype=torch.float32).reshape(-1, 4)
+            # 2026-09-09: drop degenerate boxes (< 1 px wide or high). External
+            # detectors clamp partially-out-of-image boxes to the border, which can
+            # leave zero-width boxes; ops.compute_spatial_encodings turns their
+            # aspect ratios into ~1e10 and the loss into NaN (gdino_default died
+            # this way at epoch 13). DETR's learned boxes never degenerate.
+            _ok = ((_boxes[:, 2] - _boxes[:, 0]) >= 1.0) & ((_boxes[:, 3] - _boxes[:, 1]) >= 1.0)
+            target["det_boxes"] = _boxes[_ok]
+            target["det_scores"] = torch.as_tensor(_det["scores"], dtype=torch.float32)[_ok]
+            target["det_labels"] = torch.as_tensor(_det["labels"], dtype=torch.int64)[_ok]
+            target["det_embeds"] = torch.from_numpy(np.load(_base + ".embeds.npy")).to(torch.float32)[_ok]
+
         image, target = self.transforms(image, target)
 
         return image, target, llava_answer, llava_feature
@@ -201,6 +229,15 @@ class CustomisedDLE(DistributedLearningEngine):
             images=self._state.inputs[0], targets=self._state.inputs[1], llava_answer=self._state.inputs[2], llava_feature=self._state.targets)
         if n_p != 0:
             if loss_dict['cls_loss'].isnan():
+                # raise ValueError(f"The HOI loss is NaN for rank {self._rank}")   # original
+                # 2026-09-09 (ov_hoi, env-gated): with SKIP_NAN_BATCH=1 a NaN batch is
+                # logged and skipped instead of killing a 20 h run (gdino_default died
+                # at epoch 13 on one such batch). Default (env unset) raises as before.
+                if os.environ.get("SKIP_NAN_BATCH") == "1":
+                    self._nan_batches = getattr(self, "_nan_batches", 0) + 1
+                    print(f"WARNING: NaN HOI loss on rank {self._rank}, epoch {self._state.epoch}, "
+                          f"iteration {self._state.iteration}; batch skipped ({self._nan_batches} so far)", flush=True)
+                    return
                 raise ValueError(f"The HOI loss is NaN for rank {self._rank}")
 
             self._state.loss = sum(loss for loss in loss_dict.values())
