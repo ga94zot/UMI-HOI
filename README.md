@@ -2,7 +2,7 @@
 
 This repository is maintained by **Yuankai Wu** (Technical University of Munich) and contains the PyTorch implementation for the paper
 
-> "UMI-HOI: Unifying Multimodal Information with Semantic Multi-Head Attention for Human-Object Interaction Detection", Yuankai Wu*, Zhinan Li*, Constantin Patsch, Marsil Zakour, Driton Salihu, Eckehard Steinbach; Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 2026, pp. 5999-6008 (\* equal contribution)
+> "UMI-HOI: Unifying Multimodal Information with Semantic Multi-Head Attention for Human-Object Interaction Detection", Yuankai Wu*, Zhinan Li*, Constantin Patsch, Marsil Zakour, Driton Salihu, Eckehard Steinbach; Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 2026, pp. 5999-6008
 
 \[[__paper__](https://openaccess.thecvf.com/content/CVPR2026F/html/Wu_UMI-HOI_Unifying_Multimodal_Information_with_Semantic_Multi-Head_Attention_for_Human-Object_CVPRF_2026_paper.html)\]
 
@@ -112,11 +112,11 @@ on the PViC implementation, whose original copyright notice is retained in
 If you find this work useful for your research, please consider citing it:
 
 ```bibtex
-@inproceedings{WuLi2026UMIHOI,
-  author    = {Wu, Yuankai and Li, Zhinan and Patsch, Constantin and Zakour, Marsil and Salihu, Driton and Steinbach, Eckehard},
-  title     = {{UMI-HOI}: Unifying Multimodal Information with Semantic Multi-Head Attention for Human-Object Interaction Detection},
-  booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
-  year      = {2026},
-  pages     = {5999--6008},
+@inproceedings{wu2026umi,
+  title={UMI-HOI: Unifying Multimodal Information with Semantic Multi-Head Attention for Human-Object Interaction Detection},
+  author={Wu, Yuankai and Li, Zhinan and Patsch, Constantin and Zakour, Marsil and Salihu, Driton and Steinbach, Eckehard},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  pages={5999--6008},
+  year={2026}
 }
 ```
